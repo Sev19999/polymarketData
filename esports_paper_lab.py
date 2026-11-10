@@ -11,7 +11,6 @@ st.set_page_config(
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 
-# Known series for crypto windows and commodities
 CRYPTO_SERIES = [
     "btc-up-or-down-daily",
     "eth-up-or-down-daily",
@@ -33,12 +32,10 @@ COMMODITY_SERIES = [
 
 def categorize(text):
     t = (text or "").lower()
-    if any(k in t for k in ["cs2", "csgo", "counter-strike", "dota", "valorant", "league of legends", "lol ", "esport"]):
+    if any(k in t for k in ["cs2", "csgo", "counter-strike", "counter strike", "dota", "valorant", "league of legends", "lol worlds", "lck", "lpl", "esport"]):
         return "Esports"
     if any(k in t for k in ["nba", "nfl", "mlb", "nhl", "soccer", "football", "basketball", "ufc", "mma", "tennis", "golf", "f1"]):
         return "Sports"
-    if any(k in t for k in ["bitcoin", "btc", "ethereum", "eth", "crypto", "solana", "sol "]):
-        return "Crypto"
     if any(k in t for k in ["gold", "silver", "oil", "commodity", "copper"]):
         return "Commodities"
     if any(k in t for k in ["temperature", "weather", "rain", "snow"]):
@@ -82,16 +79,22 @@ def load_series_events(series_slug, limit=20):
         return []
     return resp.json()
 
+@st.cache_data(ttl=600)
+def load_sports():
+    resp = requests.get(f"{GAMMA_BASE}/sports", timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
 st.title("Polymarket Dashboard")
-st.caption("Markets by category · Crypto & Commodities windows")
+st.caption("Esports · Sports · Crypto Windows · Commodities")
 
 if st.button("Refresh", type="primary"):
     st.cache_data.clear()
 
-# Main markets
+# Main category tabs (no Crypto, no Politics)
 df = load_markets()
 if not df.empty:
-    cats = ["Esports", "Sports", "Crypto", "Commodities", "Stocks", "Weather", "Other"]
+    cats = ["Esports", "Sports", "Commodities", "Stocks", "Weather", "Other"]
     available = [c for c in cats if c in df["category"].unique()]
     if available:
         tabs = st.tabs(available)
@@ -108,7 +111,30 @@ if not df.empty:
 
 st.divider()
 
-# Crypto windows
+# Esports leagues from sports endpoint
+st.subheader("Esports Leagues")
+sports = load_sports()
+esports = [s for s in sports if any(k in (s.get("sport") or "").lower() for k in ["cs2", "csgo", "dota", "lol", "valorant", "esport"])]
+if esports:
+    labels = [f"{s.get('sport','?')} (series {s.get('series','?')})" for s in esports[:30]]
+    choice = st.selectbox("League", labels)
+    idx = labels.index(choice)
+    series_id = esports[idx].get("series")
+    if st.button("Load Esports Games"):
+        params = {"series_id": series_id, "active": "true", "closed": "false", "limit": 30}
+        resp = requests.get(f"{GAMMA_BASE}/events", params=params, timeout=30)
+        events = resp.json() if resp.status_code == 200 else []
+        if events:
+            rows = [{"title": e.get("title"), "slug": e.get("slug"), "volume": e.get("volume")} for e in events]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("No active games for this league right now.")
+else:
+    st.info("No esports leagues found in the sports list right now.")
+
+st.divider()
+
+# Crypto windows (kept)
 st.subheader("Crypto Windows")
 crypto_choice = st.selectbox("Crypto series", CRYPTO_SERIES)
 if st.button("Load Crypto Windows"):

@@ -24,25 +24,17 @@ CRYPTO_SERIES = [
 COMMODITY_SERIES = [
     "gold-updown-15m",
     "gold-updown-1h",
-    "gold-updown-1d",
     "silver-updown-15m",
     "silver-updown-1h",
-    "silver-updown-1d",
 ]
 
 def categorize(text):
     t = (text or "").lower()
     if any(k in t for k in ["cs2", "csgo", "counter-strike", "counter strike", "dota", "valorant", "league of legends", "lol worlds", "lck", "lpl", "esport"]):
         return "Esports"
-    if any(k in t for k in ["nba", "nfl", "mlb", "nhl", "soccer", "football", "basketball", "ufc", "mma", "tennis", "golf", "f1"]):
-        return "Sports"
-    if any(k in t for k in ["gold", "silver", "oil", "commodity", "copper"]):
+    if any(k in t for k in ["gold", "silver"]):
         return "Commodities"
-    if any(k in t for k in ["temperature", "weather", "rain", "snow"]):
-        return "Weather"
-    if any(k in t for k in ["stock", "nasdaq", "s&p", "earnings"]):
-        return "Stocks"
-    return "Other"
+    return None
 
 @st.cache_data(ttl=300)
 def load_markets(limit=300):
@@ -56,6 +48,9 @@ def load_markets(limit=300):
     rows = []
     for m in markets:
         text = f"{m.get('question','')} {m.get('slug','')}"
+        cat = categorize(text)
+        if not cat:
+            continue
         yes_price = None
         try:
             prices = json.loads(m.get("outcomePrices") or "[]")
@@ -63,13 +58,27 @@ def load_markets(limit=300):
         except Exception:
             pass
         rows.append({
-            "category": categorize(text),
+            "category": cat,
             "question": m.get("question"),
             "slug": m.get("slug"),
             "yes_price": yes_price,
             "volume": float(m.get("volumeNum") or m.get("volume") or 0),
         })
     return pd.DataFrame(rows)
+
+@st.cache_data(ttl=300)
+def load_series_events(series_slug, limit=20):
+    params = {"series_slug": series_slug, "active": "true", "closed": "false", "limit": limit}
+    resp = requests.get(f"{GAMMA_BASE}/events", params=params, timeout=30)
+    if resp.status_code != 200:
+        return []
+    return resp.json()
+
+@st.cache_data(ttl=600)
+def load_sports():
+    resp = requests.get(f"{GAMMA_BASE}/sports", timeout=30)
+    resp.raise_for_status()
+    return resp.json()
 
 @st.cache_data(ttl=600)
 def load_resolved(limit=200):
@@ -83,47 +92,37 @@ def load_resolved(limit=200):
     rows = []
     for m in markets:
         text = f"{m.get('question','')} {m.get('slug','')}"
-        # outcome: look for winning outcome
+        cat = categorize(text)
+        if not cat:
+            continue
         outcome = None
         try:
             prices = json.loads(m.get("outcomePrices") or "[]")
             if prices and float(prices[0]) > 0.99:
                 outcome = "Yes"
-            elif prices and float(prices[1]) > 0.99 if len(prices) > 1 else False:
+            elif len(prices) > 1 and float(prices[1]) > 0.99:
                 outcome = "No"
         except Exception:
             pass
         rows.append({
-            "category": categorize(text),
+            "category": cat,
             "question": m.get("question"),
             "slug": m.get("slug"),
             "outcome": outcome,
             "volume": float(m.get("volumeNum") or m.get("volume") or 0),
-            "end_date": m.get("endDate"),
         })
     return pd.DataFrame(rows)
-    params = {"series_slug": series_slug, "active": "true", "closed": "false", "limit": limit}
-    resp = requests.get(f"{GAMMA_BASE}/events", params=params, timeout=30)
-    if resp.status_code != 200:
-        return []
-    return resp.json()
-
-@st.cache_data(ttl=600)
-def load_sports():
-    resp = requests.get(f"{GAMMA_BASE}/sports", timeout=30)
-    resp.raise_for_status()
-    return resp.json()
 
 st.title("Polymarket Dashboard")
-st.caption("Esports · Sports · Crypto Windows · Commodities")
+st.caption("Esports · Gold & Silver · Crypto 15m/1h")
 
 if st.button("Refresh", type="primary"):
     st.cache_data.clear()
 
-# Main category tabs (no Crypto, no Politics)
+# Active markets
 df = load_markets()
 if not df.empty:
-    cats = ["Esports", "Sports", "Commodities", "Stocks", "Weather"]
+    cats = ["Esports", "Commodities"]
     available = [c for c in cats if c in df["category"].unique()]
     if available:
         tabs = st.tabs(available)
@@ -140,7 +139,7 @@ if not df.empty:
 
 st.divider()
 
-# Esports leagues from sports endpoint
+# Esports leagues
 st.subheader("Esports Leagues")
 sports = load_sports()
 esports = [s for s in sports if any(k in (s.get("sport") or "").lower() for k in ["cs2", "csgo", "dota", "lol", "valorant", "esport"])]
@@ -159,11 +158,11 @@ if esports:
         else:
             st.info("No active games for this league right now.")
 else:
-    st.info("No esports leagues found in the sports list right now.")
+    st.info("No esports leagues found right now.")
 
 st.divider()
 
-# Crypto windows (kept)
+# Crypto windows
 st.subheader("Crypto Windows")
 crypto_choice = st.selectbox("Crypto series", CRYPTO_SERIES)
 if st.button("Load Crypto Windows"):
@@ -187,7 +186,7 @@ if st.button("Load Commodity Windows"):
 
 st.divider()
 
-# Resolved markets (historical outcomes)
+# Resolved markets
 st.subheader("Resolved Markets")
 if st.button("Load Resolved Markets"):
     with st.spinner("Loading resolved markets..."):
@@ -195,7 +194,7 @@ if st.button("Load Resolved Markets"):
     if resolved.empty:
         st.info("No resolved markets returned.")
     else:
-        cats_res = ["Esports", "Sports", "Commodities", "Stocks", "Weather", "Other"]
+        cats_res = ["Esports", "Commodities"]
         available_res = [c for c in cats_res if c in resolved["category"].unique()]
         if available_res:
             tabs_res = st.tabs(available_res)
@@ -208,3 +207,42 @@ if st.button("Load Resolved Markets"):
                     st.dataframe(display, use_container_width=True, hide_index=True)
                     csv = subset.to_csv(index=False).encode("utf-8")
                     st.download_button(f"Export {cat} Resolved", csv, f"resolved_{cat.lower()}.csv", "text/csv", key=f"res_{cat}")
+
+st.divider()
+
+# Price history
+st.subheader("Price History")
+slug_input = st.text_input("Market slug", placeholder="paste a slug from above")
+interval = st.selectbox("Interval", ["1h", "1d", "1w", "max"], index=1)
+if st.button("Pull Price History") and slug_input:
+    resp = requests.get(f"{GAMMA_BASE}/markets", params={"slug": slug_input}, timeout=30)
+    if resp.status_code == 200 and resp.json():
+        market = resp.json()[0]
+        try:
+            tokens = json.loads(market.get("clobTokenIds") or "[]")
+            token_id = tokens[0] if tokens else None
+        except Exception:
+            token_id = None
+        if token_id:
+            hist_resp = requests.get(
+                "https://clob.polymarket.com/prices-history",
+                params={"market": token_id, "interval": interval},
+                timeout=30,
+            )
+            if hist_resp.status_code == 200:
+                history = hist_resp.json().get("history", [])
+                if history:
+                    df_hist = pd.DataFrame(history)
+                    df_hist["datetime"] = pd.to_datetime(df_hist["t"], unit="s")
+                    df_hist = df_hist.rename(columns={"p": "price"})
+                    st.line_chart(df_hist.set_index("datetime")["price"])
+                    csv = df_hist[["datetime", "price"]].to_csv(index=False).encode("utf-8")
+                    st.download_button("Export Price History", csv, f"history_{slug_input}.csv", "text/csv")
+                else:
+                    st.info("No price history returned.")
+            else:
+                st.error("Could not fetch price history.")
+        else:
+            st.warning("No token ID found for this market.")
+    else:
+        st.warning("Market not found. Check the slug.")

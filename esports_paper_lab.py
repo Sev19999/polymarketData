@@ -71,8 +71,37 @@ def load_markets(limit=300):
         })
     return pd.DataFrame(rows)
 
-@st.cache_data(ttl=300)
-def load_series_events(series_slug, limit=20):
+@st.cache_data(ttl=600)
+def load_resolved(limit=200):
+    resp = requests.get(
+        f"{GAMMA_BASE}/markets",
+        params={"closed": "true", "limit": limit},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    markets = resp.json()
+    rows = []
+    for m in markets:
+        text = f"{m.get('question','')} {m.get('slug','')}"
+        # outcome: look for winning outcome
+        outcome = None
+        try:
+            prices = json.loads(m.get("outcomePrices") or "[]")
+            if prices and float(prices[0]) > 0.99:
+                outcome = "Yes"
+            elif prices and float(prices[1]) > 0.99 if len(prices) > 1 else False:
+                outcome = "No"
+        except Exception:
+            pass
+        rows.append({
+            "category": categorize(text),
+            "question": m.get("question"),
+            "slug": m.get("slug"),
+            "outcome": outcome,
+            "volume": float(m.get("volumeNum") or m.get("volume") or 0),
+            "end_date": m.get("endDate"),
+        })
+    return pd.DataFrame(rows)
     params = {"series_slug": series_slug, "active": "true", "closed": "false", "limit": limit}
     resp = requests.get(f"{GAMMA_BASE}/events", params=params, timeout=30)
     if resp.status_code != 200:
@@ -155,3 +184,27 @@ if st.button("Load Commodity Windows"):
         st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     else:
         st.info("No active windows for this series right now.")
+
+st.divider()
+
+# Resolved markets (historical outcomes)
+st.subheader("Resolved Markets")
+if st.button("Load Resolved Markets"):
+    with st.spinner("Loading resolved markets..."):
+        resolved = load_resolved()
+    if resolved.empty:
+        st.info("No resolved markets returned.")
+    else:
+        cats_res = ["Esports", "Sports", "Commodities", "Stocks", "Weather", "Other"]
+        available_res = [c for c in cats_res if c in resolved["category"].unique()]
+        if available_res:
+            tabs_res = st.tabs(available_res)
+            for tab, cat in zip(tabs_res, available_res):
+                with tab:
+                    subset = resolved[resolved["category"] == cat].sort_values("volume", ascending=False)
+                    st.write(f"{len(subset)} resolved")
+                    display = subset[["question", "outcome", "volume", "slug"]].copy()
+                    display["volume"] = display["volume"].apply(lambda x: f"${x:,.0f}")
+                    st.dataframe(display, use_container_width=True, hide_index=True)
+                    csv = subset.to_csv(index=False).encode("utf-8")
+                    st.download_button(f"Export {cat} Resolved", csv, f"resolved_{cat.lower()}.csv", "text/csv", key=f"res_{cat}")

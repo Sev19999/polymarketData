@@ -12,14 +12,14 @@ st.set_page_config(
 GAMMA_BASE = "https://gamma-api.polymarket.com"
 
 CRYPTO_SERIES = [
-    "btc-up-or-down-daily",
-    "eth-up-or-down-daily",
-    "btc-multi-strikes-weekly",
-    "ethereum-multi-strikes-weekly",
     "btc-updown-15m",
     "btc-updown-1h",
     "eth-updown-15m",
+    "eth-updown-1h",
     "sol-updown-15m",
+    "sol-updown-1h",
+    "xrp-updown-15m",
+    "xrp-updown-1h",
 ]
 COMMODITY_SERIES = [
     "gold-updown-15m",
@@ -94,7 +94,7 @@ if st.button("Refresh", type="primary"):
 # Main category tabs (no Crypto, no Politics)
 df = load_markets()
 if not df.empty:
-    cats = ["Esports", "Sports", "Commodities", "Stocks", "Weather", "Other"]
+    cats = ["Esports", "Sports", "Commodities", "Stocks", "Weather"]
     available = [c for c in cats if c in df["category"].unique()]
     if available:
         tabs = st.tabs(available)

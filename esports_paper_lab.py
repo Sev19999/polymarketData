@@ -1,10 +1,7 @@
-import json
-from datetime import datetime, timezone
-
-import pandas as pd
-import plotly.express as px
 import requests
 import streamlit as st
+import pandas as pd
+import plotly.express as px
 
 st.set_page_config(
     page_title="Esports Paper Lab",
@@ -13,182 +10,95 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-GAMMA_BASE = "https://gamma-api.polymarket.com"
-CLOB_BASE = "https://clob.polymarket.com"
+# ── Cito API ───────────────────────────────────────────────────────────────
+CITO_BASE = "https://api.citoapi.com/api/v1"
+CITO_KEY = st.secrets.get("CITO_KEY", "cito_b43929ae57aa2db93f36e49335d574d2241a36460cce889ccc8d23462183dd47")
 
 session = requests.Session()
-session.headers.update({"User-Agent": "EsportsPaperLab/1.0"})
+session.headers.update({"x-api-key": CITO_KEY})
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-def get_markets(limit=500):
-    params = {"limit": limit, "active": "true", "closed": "false"}
-    resp = session.get(f"{GAMMA_BASE}/markets", params=params, timeout=30)
+def get_upcoming(game="cs2", limit=20):
+    url = f"{CITO_BASE}/{game}/matches/upcoming"
+    resp = session.get(url, params={"limit": limit}, timeout=30)
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    return data.get("data", [])
 
-def classify_game(question, slug):
-    text = f"{question or ''} {slug or ''}".lower()
-    # Strict matching — avoid false positives from politics etc.
-    if any(k in text for k in ["league of legends", "lol worlds", "lol msi", "lck", "lpl", "lec ", "lcs "]):
-        return "League of Legends"
-    if any(k in text for k in ["valorant", "vct "]):
-        return "Valorant"
-    if any(k in text for k in ["cs2", "csgo", "counter-strike", "counter strike", "blast premier"]):
-        return "CS2"
-    if any(k in text for k in ["dota 2", "dota2", "dota ", "the international"]):
-        return "Dota 2"
-    return None
-
-def get_price_history(token_id, interval="1d"):
-    params = {"market": token_id, "interval": interval}
-    resp = session.get(f"{CLOB_BASE}/prices-history", params=params, timeout=30)
-    resp.raise_for_status()
-    history = resp.json().get("history", [])
-    if not history:
-        return pd.DataFrame()
-    df = pd.DataFrame(history)
-    df["datetime"] = pd.to_datetime(df["t"], unit="s", utc=True)
-    df = df.rename(columns={"p": "price"})
-    return df[["datetime", "price"]].sort_values("datetime")
+def get_live(game="cs2", limit=10):
+    url = f"{CITO_BASE}/{game}/matches/live"
+    resp = session.get(url, params={"limit": limit}, timeout=30)
+    if resp.status_code != 200:
+        return []
+    return resp.json().get("data", [])
 
 # ── Sidebar ────────────────────────────────────────────────────────────────
 st.sidebar.title("🎮 Esports Paper Lab")
-st.sidebar.caption("Polymarket data for LoL, CS2, Valorant & Dota 2")
+st.sidebar.caption("Powered by Cito API")
 
-game_filter = st.sidebar.multiselect(
-    "Games",
-    ["League of Legends", "CS2", "Valorant", "Dota 2"],
-    default=["League of Legends", "CS2", "Valorant", "Dota 2"],
+game = st.sidebar.selectbox(
+    "Game",
+    ["cs2", "dota2", "lol"],
+    format_func=lambda x: {"cs2": "CS2", "dota2": "Dota 2", "lol": "League of Legends"}[x],
 )
 
-if st.sidebar.button("🔄 Refresh Markets", type="primary"):
+if st.sidebar.button("🔄 Refresh", type="primary"):
     st.cache_data.clear()
 
 # ── Load data ──────────────────────────────────────────────────────────────
-@st.cache_data(ttl=300)
-def load_esports_markets():
-    markets = get_markets(limit=200)
-    rows = []
-    for m in markets:
-        game = classify_game(m.get("question"), m.get("slug"))
-        if game:
-            try:
-                tokens = json.loads(m.get("clobTokenIds", "[]"))
-                yes_token = tokens[0] if tokens else None
-            except Exception:
-                yes_token = None
-            rows.append({
-                "game": game,
-                "question": m.get("question"),
-                "slug": m.get("slug"),
-                "yes_price": json.loads(m.get("outcomePrices", "[]"))[0] if m.get("outcomePrices") else None,
-                "volume": float(m.get("volumeNum") or 0),
-                "liquidity": float(m.get("liquidityNum") or 0),
-                "yes_token": yes_token,
-                "end_date": m.get("endDate"),
-            })
-    return pd.DataFrame(rows)
+@st.cache_data(ttl=120)
+def load_matches(game):
+    upcoming = get_upcoming(game, limit=25)
+    live = get_live(game, limit=10)
+    return upcoming, live
 
-df = load_esports_markets()
+upcoming, live = load_matches(game)
 
 # ── Main UI ────────────────────────────────────────────────────────────────
-st.title("Esports Paper Lab")
-st.caption("Track League of Legends, CS2, Valorant, and Dota 2 markets on Polymarket")
+game_name = {"cs2": "CS2", "dota2": "Dota 2", "lol": "League of Legends"}[game]
+st.title(f"{game_name} Matches")
 
-if df.empty:
-    st.info("No active esports markets found right now. These usually appear around major tournaments. Try refreshing later.")
+if live:
+    st.subheader("🔴 Live")
+    live_rows = []
+    for m in live:
+        live_rows.append({
+            "Match": f"{m.get('team1Name','?')} vs {m.get('team2Name','?')}",
+            "Score": f"{m.get('team1Score',0)} - {m.get('team2Score',0)}",
+            "Event": m.get("eventName", ""),
+            "Best of": m.get("bestOf", ""),
+        })
+    st.dataframe(pd.DataFrame(live_rows), use_container_width=True, hide_index=True)
+
+st.subheader("Upcoming")
+if not upcoming:
+    st.info("No upcoming matches found.")
 else:
-    filtered = df[df["game"].isin(game_filter)].sort_values("volume", ascending=False)
+    rows = []
+    for m in upcoming:
+        rows.append({
+            "Match": f"{m.get('team1Name','?')} vs {m.get('team2Name','?')}",
+            "Event": m.get("eventName", ""),
+            "Starts": m.get("startsAt", "")[:16].replace("T", " ") if m.get("startsAt") else "",
+            "Best of": m.get("bestOf", ""),
+            "ID": m.get("id", ""),
+        })
+    df = pd.DataFrame(rows)
+    st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
 
-    # Summary cards
-    cols = st.columns(4)
-    for i, game in enumerate(["League of Legends", "CS2", "Valorant", "Dota 2"]):
-        count = len(df[df["game"] == game])
-        cols[i].metric(game, f"{count} markets")
+    # Simple selection for more detail
+    st.subheader("Match Detail")
+    options = [f"{r['Match']} ({r['Event']})" for r in rows]
+    choice = st.selectbox("Select a match", options)
+    idx = options.index(choice)
+    match = upcoming[idx]
 
-    st.subheader("Markets")
-    display_df = filtered[["game", "question", "slug", "yes_price", "volume"]].copy()
-    display_df["volume"] = display_df["volume"].apply(lambda x: f"${x:,.0f}")
-    display_df["yes_price"] = display_df["yes_price"].apply(lambda x: f"{float(x):.3f}" if x else "—")
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Team 1", match.get("team1Name", "—"))
+    c2.metric("Team 2", match.get("team2Name", "—"))
+    c3.metric("Best of", match.get("bestOf", "—"))
 
-    # Market detail
-    st.subheader("Market Detail")
-    if not filtered.empty:
-        options = filtered["slug"].tolist()
-        selected_slug = st.selectbox(
-            "Select a market",
-            options,
-            format_func=lambda s: filtered.loc[filtered["slug"] == s, "question"].values[0][:100],
-        )
-        row = filtered[filtered["slug"] == selected_slug].iloc[0]
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Game", row["game"])
-        c2.metric("Yes Price", f"{float(row['yes_price']):.3f}" if row["yes_price"] else "—")
-        c3.metric("Volume", f"${row['volume']:,.0f}")
-
-        if row["yes_token"]:
-            with st.spinner("Loading price history..."):
-                prices = get_price_history(row["yes_token"], interval="1d")
-            if not prices.empty:
-                fig = px.line(prices, x="datetime", y="price", title=row["question"])
-                fig.update_layout(
-                    yaxis_title="Yes Probability",
-                    yaxis_range=[0, 1],
-                    height=400,
-                    margin=dict(l=20, r=20, t=40, b=20),
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-                # Simple paper test controls (all adjustable in the app)
-                st.subheader("Quick Paper Test")
-                
-                strategy = st.selectbox(
-                    "Strategy",
-                    ["Custom (sliders)", "Buy Low / Sell High", "Aggressive", "Conservative"],
-                )
-                
-                if strategy == "Custom (sliders)":
-                    buy = st.slider("Buy when price is below", 0.05, 0.50, 0.30, 0.01)
-                    sell = st.slider("Sell when price is above", 0.50, 0.95, 0.70, 0.01)
-                elif strategy == "Buy Low / Sell High":
-                    buy, sell = 0.25, 0.65
-                    st.caption("Buy below 0.25 · Sell above 0.65")
-                elif strategy == "Aggressive":
-                    buy, sell = 0.35, 0.60
-                    st.caption("Buy below 0.35 · Sell above 0.60")
-                else:  # Conservative
-                    buy, sell = 0.20, 0.75
-                    st.caption("Buy below 0.20 · Sell above 0.75")
-
-                start_cash = st.number_input("Starting capital ($)", min_value=100, max_value=10000, value=1000, step=100)
-
-                if st.button("Run Test", type="primary"):
-                    cash = float(start_cash)
-                    pos = 0.0
-                    trades = 0
-                    for _, r in prices.iterrows():
-                        p = r["price"]
-                        if pos == 0 and p < buy:
-                            pos = cash / p
-                            cash = 0
-                            trades += 1
-                        elif pos > 0 and p > sell:
-                            cash = pos * p
-                            pos = 0
-                            trades += 1
-                    if pos > 0:
-                        cash = pos * prices["price"].iloc[-1]
-                    pnl = cash - start_cash
-                    col_a, col_b = st.columns(2)
-                    col_a.metric("Final Value", f"${cash:,.0f}")
-                    col_b.metric("P&L", f"${pnl:,.0f}", f"{pnl/start_cash*100:+.1f}%")
-                    st.caption(f"{trades} trades")
-            else:
-                st.warning("No price history available for this market yet.")
-        else:
-            st.warning("No token ID available.")
+    if match.get("streamLinks"):
+        st.caption("Stream: " + match["streamLinks"][0].get("url", ""))
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("Data from Polymarket public APIs")
+st.sidebar.caption("Data from Cito API")

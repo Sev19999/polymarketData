@@ -28,17 +28,17 @@ def get_markets(limit=150):
 
 def classify_game(question, slug):
     text = f"{question or ''} {slug or ''}".lower()
-    # More precise matching to avoid false positives
+    # Broader but still focused matching
     if any(k in text for k in [
-        "league of legends", "lol worlds", "lol msi", "lck ", "lpl ", "lec ", "lcs ",
-        "worlds 20", "msi 20", "lol championship"
+        "league of legends", "lol worlds", "lol msi", "lck", "lpl", "lec", "lcs",
+        "worlds", "msi"
     ]):
         return "League of Legends"
-    if any(k in text for k in ["valorant", "vct ", "champions tour"]):
+    if any(k in text for k in ["valorant", "vct"]):
         return "Valorant"
-    if any(k in text for k in ["counter-strike", "cs2 ", "csgo", "blast premier", "iem "]):
+    if any(k in text for k in ["cs2", "csgo", "counter-strike", "counter strike", "blast", "iem"]):
         return "CS2"
-    if any(k in text for k in ["dota 2", "dota2", "the international", "ti 20"]):
+    if any(k in text for k in ["dota", "dota 2", "dota2", "the international"]):
         return "Dota 2"
     return None
 

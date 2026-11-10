@@ -20,7 +20,7 @@ session = requests.Session()
 session.headers.update({"User-Agent": "EsportsPaperLab/1.0"})
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-def get_markets(limit=150):
+def get_markets(limit=500):
     params = {"limit": limit, "active": "true", "closed": "false"}
     resp = session.get(f"{GAMMA_BASE}/markets", params=params, timeout=30)
     resp.raise_for_status()
@@ -28,17 +28,14 @@ def get_markets(limit=150):
 
 def classify_game(question, slug):
     text = f"{question or ''} {slug or ''}".lower()
-    # Broader but still focused matching
-    if any(k in text for k in [
-        "league of legends", "lol worlds", "lol msi", "lck", "lpl", "lec", "lcs",
-        "worlds", "msi"
-    ]):
+    # Strict matching — avoid false positives from politics etc.
+    if any(k in text for k in ["league of legends", "lol worlds", "lol msi", "lck", "lpl", "lec ", "lcs "]):
         return "League of Legends"
-    if any(k in text for k in ["valorant", "vct"]):
+    if any(k in text for k in ["valorant", "vct "]):
         return "Valorant"
-    if any(k in text for k in ["cs2", "csgo", "counter-strike", "counter strike", "blast", "iem"]):
+    if any(k in text for k in ["cs2", "csgo", "counter-strike", "counter strike", "blast premier"]):
         return "CS2"
-    if any(k in text for k in ["dota", "dota 2", "dota2", "the international"]):
+    if any(k in text for k in ["dota 2", "dota2", "dota ", "the international"]):
         return "Dota 2"
     return None
 

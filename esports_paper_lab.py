@@ -195,14 +195,3 @@ else:
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("Data from Polymarket public APIs")
-
-# Download button for the app code
-with open(__file__, "r") as f:
-    source_code = f.read()
-
-st.sidebar.download_button(
-    label="⬇️ Download App Code",
-    data=source_code,
-    file_name="esports_paper_lab.py",
-    mime="text/plain",
-)
